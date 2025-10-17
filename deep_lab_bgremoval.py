@@ -1,42 +1,41 @@
-# deep_lab_bgremoval.py
-import torch
-import torchvision.transforms as T
-import numpy as np
+# grabcut_bgremoval.py
 import cv2
+import numpy as np
 from PIL import Image
 
-@torch.no_grad()
-def load_model():
-    try:
-        model = torch.hub.load(
-            "pytorch/vision",
-            "deeplabv3_mobilenet_v3_large",  # smaller model
-            pretrained=True,
-            force_reload=False  # prevent re-downloading every time
-        )
-        model.eval()
-        return model
-    except Exception as e:
-        print("Error loading model:", e)
-        return None
+def remove_background_grabcut(pil_image):
+    """
+    Removes the background from an image using the GrabCut algorithm.
+    Input: PIL Image
+    Output: Image (with transparent background)
+    """
+    # Convert PIL to OpenCV format
+    image = np.array(pil_image)
+    image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+    mask = np.zeros(image.shape[:2], np.uint8)
 
+    # Create background and foreground models
+    bgModel = np.zeros((1, 65), np.float64)
+    fgModel = np.zeros((1, 65), np.float64)
 
-def remove_background_deeplab(pil_image):
-    model = load_model()
-    if model is None:
-        raise RuntimeError("Model failed to load. Try reloading the app.")
+    # Define a rectangle covering almost the entire image
+    height, width = image.shape[:2]
+    rect = (10, 10, width - 10, height - 10)
 
-    transform = T.Compose([
-        T.ToTensor(),
-        T.Normalize(mean=[0.485, 0.456, 0.406],
-                    std=[0.229, 0.224, 0.225])
-    ])
-    input_tensor = transform(pil_image).unsqueeze(0)
-    output = model(input_tensor)['out'][0]
-    mask = output.argmax(0).byte().cpu().numpy()
-    mask = (mask != 0).astype(np.uint8) * 255
-
-    np_img = np.array(pil_image)
-    rgba = cv2.cvtColor(np_img, cv2.COLOR_RGB2RGBA)
-    rgba[:, :, 3] = mask
+    # Apply GrabCut
+    cv2.grabCut(image, mask, rect, bgModel, fgModel, 5, cv2.GC_INIT_WITH_RECT)
+    
+    # Convert mask to binary (0 or 1)
+    mask2 = np.where((mask == 2) | (mask == 0), 0, 1).astype('uint8')
+    
+    # Apply mask to image
+    result = image * mask2[:, :, np.newaxis]
+    
+    # Convert to RGBA (make background transparent)
+    b, g, r = cv2.split(result)
+    alpha = np.where(mask2 == 0, 0, 255).astype('uint8')
+    rgba = cv2.merge((r, g, b, alpha))
+    
+    # Convert back to PIL for Streamlit
     return Image.fromarray(rgba)
+
